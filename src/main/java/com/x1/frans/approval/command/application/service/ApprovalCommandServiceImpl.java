@@ -27,9 +27,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static com.x1.frans.approval.common.ApprovalCategoryType.*;
-import static com.x1.frans.exception.enums.ErrorCode.USER_SIGNATURE_NOT_FOUND;
-
 import static java.util.stream.Collectors.toList;
 
 
@@ -54,6 +51,9 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
 //    private final DepartmentNotificationHelper departmentNotificationHelper;
 
 
+    /*
+    * 결재 등록
+    * */
     @Transactional
     @Override
     public ApprovalResponseDTO createApproval(ApprovalCreateRequestDTO request, long userId) {
@@ -65,21 +65,12 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         // 결재 코드 생성
         String newCode = generateApprovalCode();
 
-        int degree = 1;
-         degree = approvalCommandRepository.findMaxDegreeByCode(newCode) + 1;
+        // 결재 차수
+        int degree = approvalCommandRepository.findMaxDegreeByCode(newCode) + 1;
 
+        // 검증
+        validateRequestForCreate(user, request);
 
-        if (request.getIsRequest()) {
-            if (user.getSignUrl() == null || user.getSignUrl().isBlank()) {
-                throw new IllegalStateException("서명이 등록되지 않은 사용자는 결재 등록이 불가능합니다.");
-            }
-        }
-
-
-        // 제목
-        if (request.getTitle() == null || request.getTitle().isBlank()) {
-            throw new IllegalArgumentException("제목은 필수 입력 항목입니다.");
-        }
 
         // 결재 엔티티 생성
         ApprovalEntity approval = new ApprovalEntity();
@@ -91,25 +82,11 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         approval.setCode(newCode);
         approval.setDegree(degree);
 
-
-        if(approval.getStatus() == ApprovalStatus.IN_PROGRESS) {
-            if (user.getSignUrl() == null || user.getSignUrl().isBlank()) {
-                throw new IllegalStateException("서명이 등록되지 않은 사용자는 결재 등록이 불가능합니다.");
-            }
-        }
-
-        // 저장
+        // 결재 저장
         approvalCommandRepository.save(approval);
 
-
-
-        // 결재 문서
         // 결재문서
         ApprovalDocumentDTO doc = request.getApprovalDocuments();
-        if (doc == null || doc.getCategoryType() == null ||
-                doc.getDocumentIds() == null || doc.getDocumentIds().isEmpty()) {
-            throw new IllegalArgumentException("결재 문서는 최소 1개 이상 등록해야 합니다.");
-        }
         switch (doc.getCategoryType()) {
             case ORDER -> {
                 List<OrderApprovalEntity> orderDocs = doc.getDocumentIds().stream()
@@ -135,12 +112,7 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
             default -> throw new IllegalArgumentException("알 수 없는 문서 유형입니다.");
         }
 
-        // 결재선 처리
-
         // 결재선
-        if (request.getApprovalLines() == null || request.getApprovalLines().isEmpty()) {
-            throw new IllegalArgumentException("결재선은 최소 1명 이상 등록되어야 합니다.");
-        }
 
         List<ApprovalLineEntity> approvalLines = request.getApprovalLines().stream()
                 .map(line -> {
@@ -221,6 +193,54 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         approvalFileCommandRepository.saveAll(fileEntities);
         return new ApprovalResponseDTO(approval.getId(), approval.getCode(), approval.getCreatedAt());
 }
+
+    /* 결재등록 검증
+    *  : 서명, 제목, 결재문서, 결재선
+    * */
+    private void validateRequestForCreate(UserEntity user, ApprovalCreateRequestDTO request) {
+        validateSignature(user);
+        validateTitle(request);
+        validateApprovalDocument(request);
+        validateApprovalLines(request);
+    }
+
+    // 결재선 검증
+    private void validateApprovalLines(ApprovalCreateRequestDTO request) {
+        List<ApprovalLineRequestDTO> Lines = request.getApprovalLines();
+
+        if(Lines == null || Lines.isEmpty()) {
+            throw new IllegalArgumentException("결재선 최소 1명 이상 등록되어야 합니다.");
+        }
+    }
+
+    // 결재문서 검증
+    private void validateApprovalDocument(ApprovalCreateRequestDTO request) {
+        ApprovalDocumentDTO doc = request.getApprovalDocuments();
+
+        if(doc == null || doc.getDocumentIds() == null || doc.getDocumentIds().isEmpty()) {
+            throw new IllegalArgumentException("결재 문서는 최소 1개 이상 등록해야 합니다.");
+        }
+        if(doc.getCategoryType() == null) {
+            throw new IllegalArgumentException("결재 문서의 유형이 존재하지 않습니다.");
+        }
+    }
+
+    // 제목 검증
+    private void validateTitle(ApprovalCreateRequestDTO request) {
+        String title = request.getTitle();
+
+        if(title == null || title.isBlank()) {
+            throw new IllegalArgumentException("제목은 필수 입력 항목입니다.");
+        }
+    }
+
+    // 서명 검증
+    private void validateSignature(UserEntity user) {
+        String sign = user.getSignUrl();
+        if(sign == null || sign.isBlank()) {
+            throw new IllegalStateException("서명이 등록되지 않은 사용자는 결재 등록이 불가능합니다.");
+        }
+    }
 
     private String generateApprovalCode() {
         String prefix = "APP";

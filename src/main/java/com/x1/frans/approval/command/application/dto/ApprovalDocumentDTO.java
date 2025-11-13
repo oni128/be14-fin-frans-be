@@ -24,4 +24,5 @@ public class ApprovalDocumentDTO {
 
     @Schema(description = "결재 문서 ID 목록")
     private List<Long> documentIds;
+
 }
