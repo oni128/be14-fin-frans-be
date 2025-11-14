@@ -52,7 +52,8 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
 
 
     /*
-    * 결재 등록
+    * 결재 등록, 재기안도 여기 포함되는지 확인해야함 (아닐 듯함)
+    *
     * */
     @Transactional
     @Override
@@ -64,26 +65,20 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
 
         // 결재 코드 생성
         String newCode = generateApprovalCode();
-
         // 결재 차수
         int degree = approvalCommandRepository.findMaxDegreeByCode(newCode) + 1;
 
         // 검증
         validateRequestForCreate(user, request);
 
+        /*
+        * 기본사항 (제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수) 저장
+        */
+        // todo: user 정보 저장 고민해보기
+        createBaseApproval(request, newCode, degree, user);
 
         // 결재 엔티티 생성
         ApprovalEntity approval = new ApprovalEntity();
-        approval.setTitle(request.getTitle());
-        approval.setRemarks(request.getRemarks());
-        approval.setStatus(request.getIsRequest() ? ApprovalStatus.IN_PROGRESS : ApprovalStatus.DRAFT);
-        approval.setIsRequested(request.getIsRequest());
-        approval.setUser(user); // 연관관계 설정
-        approval.setCode(newCode);
-        approval.setDegree(degree);
-
-        // 결재 저장
-        approvalCommandRepository.save(approval);
 
         // 결재문서
         ApprovalDocumentDTO doc = request.getApprovalDocuments();
@@ -193,6 +188,25 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         approvalFileCommandRepository.saveAll(fileEntities);
         return new ApprovalResponseDTO(approval.getId(), approval.getCode(), approval.getCreatedAt());
 }
+
+
+
+    /*
+     * 기본사항 DB에 저장
+     * : 제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
+     */
+    private void createBaseApproval(ApprovalCreateRequestDTO request, String newCode, int degree, UserEntity user) {
+        //제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
+        ApprovalEntity approval = new ApprovalEntity();
+        approval.setTitle(request.getTitle());
+        approval.setRemarks(request.getRemarks());
+        approval.setStatus(ApprovalStatus.IN_PROGRESS);
+        approval.setUser(user); // todo : 고민해보기
+        approval.setCode(newCode);
+        approval.setDegree(degree);
+
+        approvalCommandRepository.save(approval);
+    }
 
     /* 결재등록 검증
     *  : 서명, 제목, 결재문서, 결재선
