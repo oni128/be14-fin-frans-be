@@ -52,7 +52,7 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
 
 
     /*
-    * 결재 등록, 재기안도 여기 포함되는지 확인해야함 (아닐 듯함)
+    * 결재 등록, 재기안
     *
     * */
     @Transactional
@@ -64,6 +64,7 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
                 .orElseThrow(() -> new UserSignatureNotFoundException("기안자 정보를 찾을 수 없습니다."));
 
         // 결재 코드 생성
+        // todo: 재기안 일때 생성안해도되는지 고민해봐야함
         String newCode = generateApprovalCode();
         // 결재 차수
         int degree = approvalCommandRepository.findMaxDegreeByCode(newCode) + 1;
@@ -75,37 +76,14 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         * 기본사항 (제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수) 저장
         */
         // todo: user 정보 저장 고민해보기
-        createBaseApproval(request, newCode, degree, user);
+        ApprovalEntity approval = createBaseApproval(request, newCode, degree, user);
 
-        // 결재 엔티티 생성
-        ApprovalEntity approval = new ApprovalEntity();
 
-        // 결재문서
-        ApprovalDocumentDTO doc = request.getApprovalDocuments();
-        switch (doc.getCategoryType()) {
-            case ORDER -> {
-                List<OrderApprovalEntity> orderDocs = doc.getDocumentIds().stream()
-                        .map(docId -> new OrderApprovalEntity(approval, docId))
-                        .toList();
-                orderApprovalCommandRepository.saveAll(orderDocs);
-            }
-
-            case RETURN -> {
-                List<ReturnApprovalEntity> returnDocs = doc.getDocumentIds().stream()
-                        .map(docId -> new ReturnApprovalEntity(approval, docId))
-                        .toList();
-                returnApprovalCommandRepository.saveAll(returnDocs);
-            }
-
-            case PURCHASE_ORDER -> {
-                List<PurchaseOrderApprovalEntity> purchaseOrderDocs = doc.getDocumentIds().stream()
-                        .map(docId -> new PurchaseOrderApprovalEntity(approval, docId))
-                        .toList();
-                purchaseOrderApprovalCommandRepository.saveAll(purchaseOrderDocs);
-            }
-
-            default -> throw new IllegalArgumentException("알 수 없는 문서 유형입니다.");
-        }
+        /*
+        * 결재문서 저장
+        * : 주문, 반품, 발주
+        * */
+        saveApprovalDocument(request, approval);
 
         // 결재선
 
@@ -189,13 +167,48 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         return new ApprovalResponseDTO(approval.getId(), approval.getCode(), approval.getCreatedAt());
 }
 
+    /*
+     * 결재문서 저장
+     * : 주문, 반품, 발주
+     * */
+    private void saveApprovalDocument(ApprovalCreateRequestDTO request, ApprovalEntity approval) {
+        // 문서 유형에 따라 구분하여 저장.
+        ApprovalCategoryType type = request.getCategoryType();
+        List<Long> docIds = request.getApprovalDocuments().getDocumentIds();
 
+        switch (type) {
+            case ORDER -> {
+                List<OrderApprovalEntity> orderDocs = docIds.stream()
+                        .map(docId -> new OrderApprovalEntity(approval,docId))
+                        .toList();
+                orderApprovalCommandRepository.saveAll(orderDocs);
+            }
+
+            case RETURN -> {
+                List<ReturnApprovalEntity> returnDocs = docIds.stream()
+                        .map(docId -> new ReturnApprovalEntity(approval, docId))
+                        .toList();
+
+                returnApprovalCommandRepository.saveAll(returnDocs);
+            }
+
+            case PURCHASE_ORDER -> {
+                List<PurchaseOrderApprovalEntity> purchaseOrderDocs = docIds.stream()
+                        .map(docId -> new PurchaseOrderApprovalEntity(approval, docId))
+                        .toList();
+
+                purchaseOrderApprovalCommandRepository.saveAll(purchaseOrderDocs);
+            }
+
+            default -> throw new IllegalArgumentException("알 수 없는 문서 유형입니다.");
+        }
+    }
 
     /*
      * 기본사항 DB에 저장
      * : 제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
      */
-    private void createBaseApproval(ApprovalCreateRequestDTO request, String newCode, int degree, UserEntity user) {
+    private ApprovalEntity createBaseApproval(ApprovalCreateRequestDTO request, String newCode, int degree, UserEntity user) {
         //제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
         ApprovalEntity approval = new ApprovalEntity();
         approval.setTitle(request.getTitle());
@@ -205,7 +218,8 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         approval.setCode(newCode);
         approval.setDegree(degree);
 
-        approvalCommandRepository.save(approval);
+        return approvalCommandRepository.save(approval);
+
     }
 
     /* 결재등록 검증
@@ -234,7 +248,7 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         if(doc == null || doc.getDocumentIds() == null || doc.getDocumentIds().isEmpty()) {
             throw new IllegalArgumentException("결재 문서는 최소 1개 이상 등록해야 합니다.");
         }
-        if(doc.getCategoryType() == null) {
+        if(request.getCategoryType() == null) {
             throw new IllegalArgumentException("결재 문서의 유형이 존재하지 않습니다.");
         }
     }

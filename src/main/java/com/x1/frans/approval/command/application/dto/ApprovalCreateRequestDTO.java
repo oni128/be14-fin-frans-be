@@ -31,6 +31,7 @@ public class ApprovalCreateRequestDTO {
     @Schema(description = "결재 문서 유형")
     private ApprovalCategoryType categoryType;
 
+    // todo : 문서 번호만 저장하도록 수정 ( 결재 문서 유형 중복 )
     @Schema(description = "결재에 포함될 문서 정보")
     @NotNull(message = "결재 문서 정보는 필수입니다.")
     private ApprovalDocumentDTO approvalDocuments;
