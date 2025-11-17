@@ -20,8 +20,8 @@ public class ApprovalLineEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "approval_degree", nullable = false)
-    private Long approvalDegree;
+//    @Column(name = "approval_degree", nullable = false)
+//    private Long approvalDegree;
 
     private Integer seq;
 
@@ -45,7 +45,8 @@ public class ApprovalLineEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumns({
-            @JoinColumn(name = "approval_id", referencedColumnName = "id")
+            @JoinColumn(name = "approval_id", referencedColumnName = "id"),
+            @JoinColumn(name = "approval_degree", referencedColumnName = "degree")
     })
     private ApprovalEntity approval;
 

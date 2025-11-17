@@ -75,7 +75,6 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         /*
         * 기본사항 (제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수) 저장
         */
-        // todo: user 정보 저장 고민해보기
         ApprovalEntity approval = createBaseApproval(request, newCode, degree, user);
 
 
@@ -84,72 +83,14 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         * : 주문, 반품, 발주
         * */
         saveApprovalDocument(request, approval);
-
-        // 결재선
-
-        List<ApprovalLineEntity> approvalLines = request.getApprovalLines().stream()
-                .map(line -> {
-                    UserEntity approver = userCommandRepository.findById(line.getUserId())
-                            .orElseThrow(() -> new UserNotFoundException("결재자 정보를 찾을 수 없습니다."));
-
-                    ApprovalLineEntity approvalLine = new ApprovalLineEntity();
-                    approvalLine.setApproval(approval);
-                    approvalLine.setUser(approver);
-                    approvalLine.setSeq(line.getSeq());
-                    approvalLine.setApprovalType(ApprovalLineType.valueOf(line.getType()));
-                    approvalLine.setApprovalDegree(approval.getDegree().longValue());
-                    return approvalLine;
-                }).toList();
-
-
-        // 순서가 필요한 라인만 필터링 (결재자, 협조자)
-        List<ApprovalLineEntity> orderedLines = approvalLines.stream()
-                .filter(line -> line.getApprovalType().isOrdered())
-                .sorted(Comparator.comparingInt(ApprovalLineEntity::getSeq))
-                .collect(toList());
-
-        // 순서 필요 없는 나머지 (참조자, 수신자)
-        List<ApprovalLineEntity> referenceLines = approvalLines.stream()
-                .filter(line -> !line.getApprovalType().isOrdered())
-                .collect(toList());
-
-        // 상태 설정 enum 메서드에 위임
-        for (int i = 0; i < orderedLines.size(); i++) {
-            ApprovalLineEntity line = orderedLines.get(i);
-            line.setStatus(line.getApprovalType().getInitialStatus(i));
-        }
-
-
-        // 결재선 저장
-        List<ApprovalLineEntity> allLines = new ArrayList<>();
-        allLines.addAll(orderedLines);
-        allLines.addAll(referenceLines);
-
-        // 참조자/수신자는 상태 없이 저장
-        referenceLines.forEach(line -> line.setStatus(null));
-
-        approvalLineCommandRepository.saveAll(allLines);
-
-        if (request.getIsRequest()) {
-            NotificationTarget target = new NotificationTarget(
-                    NotificationDomainType.APPROVAL,
-                    approval.getId(),
-                    "/approval/" + approval.getId()
-            );
-
-            // 1. 결재자/협조자에게 알림 전송
-            for (ApprovalLineEntity line : approvalLines) {
-                if (line.getApprovalType() == ApprovalLineType.APPROVER
-                        || line.getApprovalType() == ApprovalLineType.COOPERATOR) {
-                    approvalRequestNotificationSender.notifyApprovalRequested(
-                            approval.getId(),
-                            line.getUser().getId(),
-                            target
-                    );
-                }
-            }
-        }
-
+        
+        /*
+        * 결재선 기본사항 저장
+        * : 타입(결재,협조,참조,수신), 순서, 결재, 유저
+        *
+        * 순서 필터링
+        * */
+        saveApprovalLines(request, approval);
 
 
         // 첨부파일
@@ -166,6 +107,74 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         approvalFileCommandRepository.saveAll(fileEntities);
         return new ApprovalResponseDTO(approval.getId(), approval.getCode(), approval.getCreatedAt());
 }
+
+    private void saveApprovalLines(ApprovalCreateRequestDTO request, ApprovalEntity approval) {
+
+        // 결재선 기본사항 저장
+        // : 타입(결재,협조,참조,수신), 순서(필터링 전), 결재, 유저
+        List<ApprovalLineEntity> lines = request.getApprovalLines().stream()
+                .map(line -> {
+                    UserEntity user = userCommandRepository.findById(line.getUserId())
+                            .orElseThrow(() -> new IllegalArgumentException("결재자 정보가 없습니다."));
+
+                    ApprovalLineEntity approvalLine = new ApprovalLineEntity();
+                    approvalLine.setApprovalType(ApprovalLineType.valueOf(line.getType()));
+                    approvalLine.setSeq(line.getSeq());
+                    approvalLine.setApproval(approval);
+                    approvalLine.setUser(user);
+
+                    return approvalLine;
+
+                }).toList();
+
+
+        // 순서가 필요한 라인 필터링 (결재자, 협조자)
+        List<ApprovalLineEntity> orderedLines = lines.stream()
+                .filter(line -> line.getApprovalType().isOrdered()) // true
+                .sorted(Comparator.comparingInt(ApprovalLineEntity::getSeq))
+                .toList();
+        // 순서 필요 없는 라인 필터링 (참조자, 수신자)
+        List<ApprovalLineEntity> disorderLines = lines.stream()
+                .filter(line -> !line.getApprovalType().isOrdered()) // false
+                .toList();
+
+        // 필터링된 값을 이전에 만들어놨던 lines에 맞춰 순서(재정의)와, 상태 삽입하기.
+        // 순서 필요한 라인 삽입
+        for(int i=0; i<orderedLines.size(); i++) {
+            ApprovalLineEntity line = orderedLines.get(i);
+            line.setSeq(i);
+            line.setStatus(line.getApprovalType().getInitialStatus(i));
+        }
+        // 순서 필요 없는 라인 삽입
+        // 결재선 순서가 not null로 이렇게 삽입 Todo: not null -> null로 고민해보기
+        disorderLines.forEach(line -> line.setSeq(-1));
+        disorderLines.forEach(line -> line.setStatus(null));
+
+
+        approvalLineCommandRepository.saveAll(lines);
+
+
+        // 알림 !
+        if (request.getIsRequest()) {
+            NotificationTarget target = new NotificationTarget(
+                    NotificationDomainType.APPROVAL,
+                    approval.getId(),
+                    "/approval/" + approval.getId()
+            );
+
+            // 1. 결재자/협조자에게 알림 전송
+            for (ApprovalLineEntity line : lines) {
+                if (line.getApprovalType() == ApprovalLineType.APPROVER
+                        || line.getApprovalType() == ApprovalLineType.COOPERATOR) {
+                    approvalRequestNotificationSender.notifyApprovalRequested(
+                            approval.getId(),
+                            line.getUser().getId(),
+                            target
+                    );
+                }
+            }
+        }
+    }
 
     /*
      * 결재문서 저장
@@ -209,14 +218,15 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
      * : 제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
      */
     private ApprovalEntity createBaseApproval(ApprovalCreateRequestDTO request, String newCode, int degree, UserEntity user) {
-        //제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
+        // 제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
         ApprovalEntity approval = new ApprovalEntity();
         approval.setTitle(request.getTitle());
         approval.setRemarks(request.getRemarks());
-        approval.setStatus(ApprovalStatus.IN_PROGRESS);
-        approval.setUser(user); // todo : 고민해보기
+        approval.setStatus(request.getIsRequest() ? ApprovalStatus.IN_PROGRESS: ApprovalStatus.DRAFT);
+        approval.setUser(user);
         approval.setCode(newCode);
         approval.setDegree(degree);
+        approval.setIsRequested(request.getIsRequest());
 
         return approvalCommandRepository.save(approval);
 
@@ -248,6 +258,7 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         if(doc == null || doc.getDocumentIds() == null || doc.getDocumentIds().isEmpty()) {
             throw new IllegalArgumentException("결재 문서는 최소 1개 이상 등록해야 합니다.");
         }
+
         if(request.getCategoryType() == null) {
             throw new IllegalArgumentException("결재 문서의 유형이 존재하지 않습니다.");
         }
@@ -365,7 +376,6 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
                     approvalLine.setUser(approver);
                     approvalLine.setSeq(line.getSeq());
                     approvalLine.setApprovalType(ApprovalLineType.valueOf(line.getType()));
-                    approvalLine.setApprovalDegree(approval.getDegree().longValue());
                     return approvalLine;
                 }).toList();
 
@@ -743,9 +753,9 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
                     approvalLine.setUser(approver);
                     approvalLine.setSeq(line.getSeq());
                     approvalLine.setApprovalType(ApprovalLineType.valueOf(line.getType()));
-                    if (approval.getDegree() != null) {
-                        approvalLine.setApprovalDegree(approval.getDegree().longValue());
-                    }
+//                    if (approval.getDegree() != null) { // ApprovalLineEntity에서 degree를 제거하면서 오류발생하여 주석처리함
+//                        approvalLine.setApprovalDegree(approval.getDegree().longValue());
+//                    }
                     return approvalLine;
                 }).toList();
 
