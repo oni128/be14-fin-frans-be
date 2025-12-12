@@ -20,9 +20,6 @@ public class ApprovalLineEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-//    @Column(name = "approval_degree", nullable = false)
-//    private Long approvalDegree;
-
     private Integer seq;
 
     @Enumerated(EnumType.STRING)

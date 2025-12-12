@@ -63,19 +63,18 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         UserEntity user = userCommandRepository.findById(userId)
                 .orElseThrow(() -> new UserSignatureNotFoundException("기안자 정보를 찾을 수 없습니다."));
 
-        // 결재 코드 생성
-        // todo: 재기안 일때 생성안해도되는지 고민해봐야함
-        String newCode = generateApprovalCode();
-        // 결재 차수
-        int degree = approvalCommandRepository.findMaxDegreeByCode(newCode) + 1;
-
-        // 검증
+        /*
+        * 검증
+        * : 서명, 제목, 결재문서, 결재선
+        * */
         validateRequestForCreate(user, request);
 
+
         /*
-        * 기본사항 (제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수) 저장
+        * 기본사항 저장
+        * : 제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
         */
-        ApprovalEntity approval = createBaseApproval(request, newCode, degree, user);
+        ApprovalEntity approval = createBaseApproval(request, user);
 
 
         /*
@@ -83,35 +82,54 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         * : 주문, 반품, 발주
         * */
         saveApprovalDocument(request, approval);
-        
+
+
         /*
         * 결재선 기본사항 저장
         * : 타입(결재,협조,참조,수신), 순서, 결재, 유저
         *
-        * 순서 필터링
+        * 순서 필터링 후 [순서, 상태] 저장
+        * : orderedLines(결재자, 협조자) → seq 재정의 + status 설정
+            disorderLines(참조자, 수신자) → seq null + status null
         * */
         saveApprovalLines(request, approval);
 
 
-        // 첨부파일
-        List<ApprovalFileEntity> fileEntities = request.getFiles()== null ? List.of() :
-                request.getFiles().stream()
-                .map(file -> {
-                    ApprovalFileEntity approvalFile = new ApprovalFileEntity();
-                    approvalFile.setApproval(approval);
-                    approvalFile.setName(file.getName());
-                    approvalFile.setUrl(file.getUrl());
-                    return approvalFile;
-                }).toList();
+        /*
+        * 첨부파일
+        * */
+        saveFiles(request, approval);
 
-        approvalFileCommandRepository.saveAll(fileEntities);
         return new ApprovalResponseDTO(approval.getId(), approval.getCode(), approval.getCreatedAt());
 }
 
+    /*
+    * 첨부파일
+    * */
+    private void saveFiles(ApprovalCreateRequestDTO request, ApprovalEntity approval) {
+
+        List<ApprovalFileEntity> files = request.getFiles().stream()
+                .map(file -> {
+                    ApprovalFileEntity approvalFile = new ApprovalFileEntity();
+                    approvalFile.setName(file.getName());
+                    approvalFile.setUrl(file.getUrl());
+                    approvalFile.setSize(file.getSize());
+                    approvalFile.setApproval(approval);
+
+                    return approvalFile;
+                }).toList();
+
+        approvalFileCommandRepository.saveAll(files);
+    }
+
+    /*
+    * 결재선
+    * */
     private void saveApprovalLines(ApprovalCreateRequestDTO request, ApprovalEntity approval) {
 
         // 결재선 기본사항 저장
         // : 타입(결재,협조,참조,수신), 순서(필터링 전), 결재, 유저
+        // Todo : N+1 문제 해결하기
         List<ApprovalLineEntity> lines = request.getApprovalLines().stream()
                 .map(line -> {
                     UserEntity user = userCommandRepository.findById(line.getUserId())
@@ -131,7 +149,9 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
         // 순서가 필요한 라인 필터링 (결재자, 협조자)
         List<ApprovalLineEntity> orderedLines = lines.stream()
                 .filter(line -> line.getApprovalType().isOrdered()) // true
-                .sorted(Comparator.comparingInt(ApprovalLineEntity::getSeq))
+//                .sorted(Comparator.comparingInt(ApprovalLineEntity::getSeq))
+                // null이 존재해도 에러없이 뒤로 보내는 코드로 수정
+                .sorted(Comparator.comparing(ApprovalLineEntity::getSeq, Comparator.nullsLast(Integer::compareTo)))
                 .toList();
         // 순서 필요 없는 라인 필터링 (참조자, 수신자)
         List<ApprovalLineEntity> disorderLines = lines.stream()
@@ -146,9 +166,10 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
             line.setStatus(line.getApprovalType().getInitialStatus(i));
         }
         // 순서 필요 없는 라인 삽입
-        // 결재선 순서가 not null로 이렇게 삽입 Todo: not null -> null로 고민해보기
-        disorderLines.forEach(line -> line.setSeq(-1));
-        disorderLines.forEach(line -> line.setStatus(null));
+        disorderLines.forEach(line -> {
+            line.setStatus(null);
+            line.setSeq(null);
+        });
 
 
         approvalLineCommandRepository.saveAll(lines);
@@ -217,8 +238,14 @@ public class ApprovalCommandServiceImpl implements ApprovalCommandService {
      * 기본사항 DB에 저장
      * : 제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
      */
-    private ApprovalEntity createBaseApproval(ApprovalCreateRequestDTO request, String newCode, int degree, UserEntity user) {
+    private ApprovalEntity createBaseApproval(ApprovalCreateRequestDTO request, UserEntity user) {
         // 제목, 내용, 상태, 요청여부, 유저정보, 코드, 차수
+
+        // 결재 코드 생성
+        String newCode = generateApprovalCode();
+        // 결재 차수
+        int degree = approvalCommandRepository.findMaxDegreeByCode(newCode) + 1;
+
         ApprovalEntity approval = new ApprovalEntity();
         approval.setTitle(request.getTitle());
         approval.setRemarks(request.getRemarks());

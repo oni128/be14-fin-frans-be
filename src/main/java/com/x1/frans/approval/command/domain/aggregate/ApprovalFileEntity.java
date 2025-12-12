@@ -30,7 +30,4 @@ public class ApprovalFileEntity {
             @JoinColumn(name = "approval_degree", referencedColumnName = "degree")
     })
     private ApprovalEntity approval;
-
-    @Column(name = "approval_degree", insertable = false, updatable = false)
-    private Long approvalDegree;
 }
